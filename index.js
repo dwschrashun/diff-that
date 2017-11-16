@@ -35,7 +35,7 @@ const runTest = async ({testUrl, controlUrl, testFn, loadedFn, description, file
   //setup
   const pages = await startTest(testUrl, controlUrl, loadedFn, browsers);
 
-  console.log("TEST STARTED: ", testUrl, controlUrl);
+  // console.log("TEST STARTED: ", testUrl, controlUrl);
 
   //run test
     //testFN takes two page instances as parameters
@@ -43,11 +43,11 @@ const runTest = async ({testUrl, controlUrl, testFn, loadedFn, description, file
 
   const testBuffers = await testFn(pages);
 
-  console.log("TEST COMPLETE: ", testUrl, controlUrl);
+  console.log("TEST COMPLETE: ", filename);
 
   const result = await runDiff(testBuffers, filename);
 
-  console.log("DIFF COMPLETE: ", filename, result);
+  // console.log("DIFF COMPLETE: ", filename, result);
 
   //close
   await closePages(pages);
@@ -56,20 +56,20 @@ const runTest = async ({testUrl, controlUrl, testFn, loadedFn, description, file
 }
 
 // can pass options for browsers, like window size etc
-// pass a callback to determine when page has loaded sufficiently
-// cb takes a page instance
-const startTest = async (testUrl, controlUrl, cb = () => Promise.resolve(), browsers, options = {}) => {
+// pass a callback (loadedFn) to determine when page has loaded sufficiently
+// loadedFn takes a page instance
+const startTest = async (testUrl, controlUrl, loadedFn = () => Promise.resolve(), browsers, options = {}) => {
   const runTest = async () => {
     const testPage = await browsers.testBrowser.newPage();
     await testPage.goto(testUrl);
-    await cb(testPage);
+    await loadedFn(testPage);
     return testPage;
   };
 
   const runControl = async () => {
     const controlPage = await browsers.controlBrowser.newPage();
     await controlPage.goto(controlUrl);
-    await cb(controlPage);
+    await loadedFn(controlPage);
     return controlPage;
   };
 
@@ -88,13 +88,12 @@ const startTest = async (testUrl, controlUrl, cb = () => Promise.resolve(), brow
 
 const runDiff = async (imageBuffers, filename) => {
   return new Promise ((resolve, reject) => {
-    console.log("BUFFERS", imageBuffers);
     resemble(imageBuffers.test)
       .compareTo(imageBuffers.control)
       .onComplete(data => {
-        console.log("DIFFED", data);
         if (data.error) return reject(error);
         writeDiff(data.getBuffer(), filename).then(() => {
+          data.filename = filename;
           return resolve(data);
         }).catch(err => {
           throw err;
@@ -128,6 +127,7 @@ const closePages = async (pages) => {
      testUrl,
      controlUrl,
      testFn,
+     loadedFn,
      description,
      options
     }
@@ -146,13 +146,12 @@ const collectTests = async (testLocation) => {
       return resolve(files);
     });
   });
-  console.log("test FILES", testFiles);
+  console.log("TEST FILES: ", testFiles);
   const testObjects = testFiles.map(testFile => {
     let obj = require(path.resolve(testLocation, testFile));
     obj.filename = testFile.split(".")[0];
     return obj;
   });
-  console.log("test FILES", testObjects);
   return testObjects;
 }
 
@@ -160,6 +159,12 @@ const finish = async (results, browsers) => {
   for (browser in browsers) {
     await browsers[browser].close();
   }
+  console.log("\n ///// FINAL RESULTS /////\n");
+  results.forEach((result) => {
+    console.log(`Test at: ${result.filename}`)
+    console.log(`-- Same dimensions?  ${result.isSameDimensions}`)
+    console.log(`-- Mismatch Percentage: ${result.misMatchPercentage}\n`)
+  });
   return results;
 }
 
@@ -178,7 +183,6 @@ const startBrowsers = async () => {
 //provide default urls for suite
 const runSuite = async (options = {}) => {
   const testLocation = options.testLocation || './sample-tests';
-  console.log("Test location", testLocation);
   const browsers = await startBrowsers();
   const tests = await collectTests(testLocation);
   const results = await Promise.all(tests.map(test => runTest(test, browsers)));

@@ -1,5 +1,5 @@
-const testUrl = 'localhost:4200/?embedType=inline';
-const controlUrl = 'http://player-backend.cnevids.com/stage/?embedType=inline';
+const testUrl = 'localhost:4200/?embedType=inline&autoplay=false';
+const controlUrl = 'http://player-backend.cnevids.com/stage/?embedType=inline&autoplay=false';
 const description = 'Crample Test';
 const options = {};
 
@@ -15,7 +15,11 @@ const testFn = ({testPage, controlPage}) => {
     }
   });
 };
-const loadedFn = async () => {};
+const loadedFn = async (page) => {
+  await page.addStyleTag({
+    content: '.video-js .cne-animated-clip, .player-container .video-js .vjs-tech { display: none; }'
+  })
+  return await page.waitForSelector('.vjs-big-play-button');
+};
 
-
-module.exports = {testUrl, controlUrl, testFn, options};
+module.exports = {testUrl, controlUrl, testFn, loadedFn, options};
