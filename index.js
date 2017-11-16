@@ -1,27 +1,11 @@
 const cProcess = require("child_process");
 const puppeteer = require('puppeteer');
 
-//in case we need to spawn any child processes / do deploys before running tests
-
-/*const ls = cProcess.spawn('ember deploy qa', ['-lh', '/usr']);
-
-let deployOutput = '';
-
-ls.stdout.on('data', (data) => {
-  // console.log(`stdout: ${data}`);
-  deployOutput += data;
-});
-
-ls.stderr.on('data', (data) => {
-  console.error(`stderr: ${data}`);
-});
-
-ls.on('close', (code) => {
-  console.log(`child process exited with code ${code}`);
-  console.log('output', deployOutput);
-});
-*/
-
+//note that this needs to be done for resemble to work
+// `brew install pkg-config cairo libpng jpeg giflib && npm install canvas`
+const resemble = require('resemblejs');
+const fs = require('fs');
+const path = require('path');
 
 /*
 
@@ -37,46 +21,103 @@ ls.on('close', (code) => {
   -- return result of diffing
 */
 
+
+// TODO: use these as default values for test objects coming in to runTest
+const defaultTest = {
+  description: '',
+  testFn: async () => {},
+  loadedFn: async () => {},
+  options: {}
+}
+
+const runTest = async ({testUrl, controlUrl, testFn, loadedFn, description, filename, options = {}}, browsers) => {
+  console.log("RUNNING TEST: ", filename);
+  //setup
+  const pages = await startTest(testUrl, controlUrl, loadedFn, browsers);
+
+  console.log("TEST STARTED: ", testUrl, controlUrl);
+
+  //run test
+    //testFN takes two page instances as parameters
+    //testFN returns a screenshot buffer for each browser
+
+  const testBuffers = await testFn(pages);
+
+  console.log("TEST COMPLETE: ", testUrl, controlUrl);
+
+  const result = await runDiff(testBuffers, filename);
+
+  console.log("DIFF COMPLETE: ", filename, result);
+
+  //close
+  await closePages(pages);
+
+  return result;
+}
+
 // can pass options for browsers, like window size etc
 // pass a callback to determine when page has loaded sufficiently
-const start = async (cb = () => Promise.resolve(), options = {}) => {
-  let testBrowser;
-  let controlBrowser;
+// cb takes a page instance
+const startTest = async (testUrl, controlUrl, cb = () => Promise.resolve(), browsers, options = {}) => {
   const runTest = async () => {
-    testBrowser = await puppeteer.launch({headless: false});
-    const testPage = await testBrowser.newPage();
-    await testPage.goto('localhost:4200');
-    await cb();
-    // await testPage.screenshot({path: '/diffs/test.png', fullPage: true});
-
+    const testPage = await browsers.testBrowser.newPage();
+    await testPage.goto(testUrl);
+    await cb(testPage);
+    return testPage;
   };
 
   const runControl = async () => {
-    controlBrowser = await puppeteer.launch({headless: false});
-    const controlPage = await controlBrowser.newPage();
-    await controlPage.goto('http://player-backend.cnevids.com/stage/');
-    await cb();
-    // await controlPage.screenshot({path: '/diffs/control.png', fullPage: true});
+    const controlPage = await browsers.controlBrowser.newPage();
+    await controlPage.goto(controlUrl);
+    await cb(controlPage);
+    return controlPage;
   };
 
   const run = async () => {
-    runTest();
-    runControl();
+    return Promise.all([runTest(), runControl()]).then(pages => {
+      return {
+        testPage: pages[0],
+        controlPage: pages[1]
+      }
+    });
   }
 
-  await run();
-  await testBrowser.close();
-  await controlBrowser.close();
+  return await run();
 };
 
-const runTest = async ({testUrl, controlUrl, testFn, options = {}}) => {
-  //setup
-  await start();
-  //run test
-    //test takes two browser instances as parameters
 
-  //close
+const runDiff = async (imageBuffers, filename) => {
+  return new Promise ((resolve, reject) => {
+    console.log("BUFFERS", imageBuffers);
+    resemble(imageBuffers.test)
+      .compareTo(imageBuffers.control)
+      .onComplete(data => {
+        console.log("DIFFED", data);
+        if (data.error) return reject(error);
+        writeDiff(data.getBuffer(), filename).then(() => {
+          return resolve(data);
+        }).catch(err => {
+          throw err;
+        });
+      });
+  });
 }
+
+const writeDiff = async (buffer, filename) => {
+  return new Promise((resolve, reject) => {
+    fs.writeFile(path.resolve('./diffs/', `${filename}.png`), buffer, err => {
+      if (err) return reject(err);
+      return resolve(filename);
+    });
+  });
+}
+
+const closePages = async (pages) => {
+  return Promise.all([
+    pages.testPage.close(),
+    pages.controlPage.close()
+  ]);
+};
 
 /*
   scan directories for test files
@@ -87,28 +128,70 @@ const runTest = async ({testUrl, controlUrl, testFn, options = {}}) => {
      testUrl,
      controlUrl,
      testFn,
+     description,
      options
     }
 */
 
 // TODO: 'before' keys can be before hooks to run before each test in a file
 // we'd have to schedule these to run before each test
-const collectTests = async () => {
+// returns test objects exported from each test file
 
+// TODO: allow test files to return an array of testObjects
+
+const collectTests = async (testLocation) => {
+  const testFiles = await new Promise((resolve, reject) => {
+    fs.readdir(testLocation, function (err, files) {
+      if (err) return reject(err);
+      return resolve(files);
+    });
+  });
+  console.log("test FILES", testFiles);
+  const testObjects = testFiles.map(testFile => {
+    let obj = require(path.resolve(testLocation, testFile));
+    obj.filename = testFile.split(".")[0];
+    return obj;
+  });
+  console.log("test FILES", testObjects);
+  return testObjects;
 }
 
-const runSuite = async () => {
-  const tests = await collectTests();
-  const results = await Promise.all(tests.map(test => runTest(test)));
-  processResults();
+const finish = async (results, browsers) => {
+  for (browser in browsers) {
+    await browsers[browser].close();
+  }
+  return results;
 }
 
+const startBrowsers = async () => {
+  return Promise.all([
+    puppeteer.launch({headless: false}),
+    puppeteer.launch({headless: false})
+  ]).then(browsers => {
+    return {
+      testBrowser: browsers[0],
+      controlBrowser: browsers[1]
+    }
+  });
+}
 
-// runSuite();
+//provide default urls for suite
+const runSuite = async (options = {}) => {
+  const testLocation = options.testLocation || './sample-tests';
+  console.log("Test location", testLocation);
+  const browsers = await startBrowsers();
+  const tests = await collectTests(testLocation);
+  const results = await Promise.all(tests.map(test => runTest(test, browsers)));
+  await finish(results, browsers);
+}
+
+runSuite().catch(err => {
+  console.log("OOOOOPS", err);
+});
 
 
 
-
+///////////////////////////////////
 
 
 const dummy = async () => {
@@ -117,7 +200,7 @@ const dummy = async () => {
   const runTest = async () => {
     testBrowser = await puppeteer.launch({headless: false});
     const testPage = await testBrowser.newPage();
-    await testPage.goto('localhost:4200', {waitUntil: 'networkidle0'});
+    await testPage.goto('localhost:4200/?embedType=inline', {waitUntil: 'networkidle0'});
     await testPage.screenshot({path: 'diffs/test.png', fullPage: true});
     await testBrowser.close();
   };
@@ -125,7 +208,7 @@ const dummy = async () => {
   const runControl = async () => {
     controlBrowser = await puppeteer.launch({headless: false});
     const controlPage = await controlBrowser.newPage();
-    await controlPage.goto('http://player-backend.cnevids.com/stage/', {waitUntil: 'networkidle0'});
+    await controlPage.goto('http://player-backend.cnevids.com/stage/?embedType=inline', {waitUntil: 'networkidle0'});
     await controlPage.screenshot({path: 'diffs/control.png', fullPage: true});
     await controlBrowser.close();
   };
@@ -138,7 +221,7 @@ const dummy = async () => {
 }
 
 
-dummy();
+// dummy();
 
 
 
