@@ -4,6 +4,7 @@ const description = 'Crample Test';
 const options = {};
 
 //must return screenshot buffers
+//TODO: return the page instance and take the screenshot in the test runner
 const testFn = ({testPage, controlPage}) => {
   return Promise.all([
     testPage.screenshot({fullPage: true}),

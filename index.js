@@ -38,10 +38,11 @@ const runTest = async ({testUrl, controlUrl, testFn, loadedFn, description, file
   // console.log("TEST STARTED: ", testUrl, controlUrl);
 
   //run test
-    //testFN takes two page instances as parameters
+    //testFN takes page instances as parameters
     //testFN returns a screenshot buffer for each browser
+    //IN PROGRESS: only pass one page instance to the testFn, but run it on both
 
-  const testBuffers = await testFn(pages);
+  const testBuffers = await testWrapper(pages, testFn);
 
   console.log("TEST COMPLETE: ", filename);
 
@@ -53,6 +54,11 @@ const runTest = async ({testUrl, controlUrl, testFn, loadedFn, description, file
   await closePages(pages);
 
   return result;
+}
+
+const testWrapper = async (pages, testFn) => {
+
+
 }
 
 // can pass options for browsers, like window size etc
